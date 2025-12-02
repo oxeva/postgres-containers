@@ -1,0 +1,174 @@
+
+#ARG BASE=ubuntu:20.04
+#ARG BASE=debian:trixie-slim@sha256:9b6ccd28f4913155f35e10ecd4437347d86ebce4ecf5853b3568141468faec56
+ARG BASE=ghcr.io/cloudnative-pg/postgresql:15.10-standard-bookworm
+FROM $BASE AS minimal
+
+USER root
+
+# Specify babelfish version by using a tag from:
+# https://github.com/babelfish-for-postgresql/babelfish-for-postgresql/tags
+ARG BABELFISH_VERSION=BABEL_3_8_0__PG_15_10
+ARG PG_VERSION
+ARG PG_MAJOR=15
+
+ENV PATH=$PATH:/usr/lib/postgresql/$PG_MAJOR/bin
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends\
+    libssl3 openssl libldap-common libxml2 libpam0g uuid libossp-uuid16\
+	libxslt1.1 libicu72 unixodbc liblz4-1 python3 libselinux1 libzstd1 libgss3 libkrb5-3 \
+    libsystemd0 libtcl8.6 libperl5.36
+
+FROM minimal AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends\
+	build-essential flex libxml2-dev libxml2-utils\
+	libxslt-dev libssl-dev libreadline-dev zlib1g-dev\
+	libldap2-dev libpam0g-dev gettext uuid uuid-dev\
+	cmake lld apt-utils libossp-uuid-dev gnulib bison\
+	xsltproc icu-devtools libicu72\
+	libicu-dev gawk\
+	curl openjdk-17-jre openssl\
+	g++ libssl-dev python-dev-is-python3 \
+	pkg-config libutfcpp-dev\
+	gnupg unixodbc-dev net-tools unzip wget
+
+RUN apt-get install -y --no-install-recommends \
+    liblz4-dev python3-dev libzstd-dev libgss-dev libselinux-dev libkrb5-dev \
+    libsystemd-dev tcl-dev libperl-dev
+
+# Download babelfish sources
+WORKDIR /workplace
+
+ENV BABELFISH_REPO=babelfish-for-postgresql/babelfish-for-postgresql
+ENV BABELFISH_URL=https://github.com/${BABELFISH_REPO}
+ENV BABELFISH_TAG=${BABELFISH_VERSION}
+ENV BABELFISH_FILE=${BABELFISH_VERSION}.tar.gz
+
+RUN wget ${BABELFISH_URL}/releases/download/${BABELFISH_TAG}/${BABELFISH_FILE}
+RUN tar -xvzf ${BABELFISH_FILE}
+
+# Set environment variables
+ENV JOBS=4
+ENV BABELFISH_HOME=/opt/babelfish
+ENV PG_CONFIG=${BABELFISH_HOME}/usr/lib/postgresql/15/bin/pg_config
+ENV PG_SRC=/workplace/${BABELFISH_VERSION}
+
+WORKDIR ${PG_SRC}
+
+# Compile ANTLR 4
+ENV ANTLR4_VERSION=4.9.3
+ENV ANTLR4_JAVA_BIN=/usr/bin/java
+ENV ANTLR4_RUNTIME_LIBRARIES=/usr/include/antlr4-runtime
+ENV ANTLR_FILE=antlr-${ANTLR4_VERSION}-complete.jar
+ENV ANTLR_EXECUTABLE=/usr/local/lib/${ANTLR_FILE}
+ENV ANTLR_CONTRIB=${PG_SRC}/contrib/babelfishpg_tsql/antlr/thirdparty/antlr
+ENV ANTLR_RUNTIME=/workplace/antlr4
+
+RUN cp ${ANTLR_CONTRIB}/${ANTLR_FILE} /usr/local/lib
+
+WORKDIR /workplace
+
+ENV ANTLR_DOWNLOAD=http://www.antlr.org/download
+ENV ANTLR_CPP_SOURCE=antlr4-cpp-runtime-${ANTLR4_VERSION}-source.zip
+
+RUN wget ${ANTLR_DOWNLOAD}/${ANTLR_CPP_SOURCE}
+RUN unzip -d ${ANTLR_RUNTIME} ${ANTLR_CPP_SOURCE}
+
+WORKDIR ${ANTLR_RUNTIME}/build
+
+RUN cmake .. -D\
+	ANTLR_JAR_LOCATION=${ANTLR_EXECUTABLE}\
+	-DCMAKE_INSTALL_PREFIX=/usr/local -DWITH_DEMO=True
+RUN make -j ${JOBS} && make install
+
+# Build modified PostgreSQL for Babelfish
+WORKDIR ${PG_SRC}
+
+RUN ./configure CFLAGS="-ggdb"\
+    --build=x86_64-linux-gnu\
+    --prefix=/usr\
+    --mandir=/usr/share/postgresql/15/man\
+    --infodir=/usr/share/info\
+    --sysconfdir=/etc/postgresql-common\
+    --localstatedir=/var\
+    --docdir=/usr/share/doc/postgresql-doc-15\
+    --datarootdir=/usr/share/\
+    --datadir=/usr/share/postgresql/15\
+    --bindir=/usr/lib/postgresql/15/bin\
+    --libdir=/usr/lib/x86_64-linux-gnu/\
+    --libexecdir=/usr/lib/postgresql/\
+    --includedir=/usr/include/postgresql/\
+    --with-tcl\
+    --with-perl\
+    --with-python\
+    --with-pam\
+    --with-libxml\
+    --with-libxslt\
+    --enable-nls\
+    --enable-thread-safety\
+    --enable-debug\
+    --disable-rpath\
+    --with-ldap\
+    --with-uuid=ossp\
+    --with-gssapi\
+    --with-system-tzdata=/usr/share/zoneinfo\
+    --with-icu\
+    --with-lz4\
+    --with-zstd\
+    --with-systemd\
+    --with-selinux\
+    --with-openssl
+
+RUN make DESTDIR=${BABELFISH_HOME}/ -j ${JOBS} 2>error.txt && make install DESTDIR=${BABELFISH_HOME}/
+
+COPY babelfish-0.patch .
+RUN patch -p1 < babelfish-0.patch
+
+COPY babelfish-1.patch .
+RUN patch -p1 < babelfish-1.patch
+
+WORKDIR ${PG_SRC}/contrib
+
+RUN make -j ${JOBS} && make install DESTDIR=${BABELFISH_HOME}/
+
+# Compile the ANTLR parser generator
+RUN cp /usr/local/lib/libantlr4-runtime.so.${ANTLR4_VERSION}\
+	${BABELFISH_HOME}/usr/lib/x86_64-linux-gnu/
+
+WORKDIR ${PG_SRC}/contrib/babelfishpg_tsql/antlr 
+RUN cmake -Wno-dev .
+RUN make all
+
+# Compile the contrib modules and build Babelfish
+WORKDIR ${PG_SRC}/contrib/babelfishpg_common
+RUN make -j ${JOBS} && make PG_CONFIG=${PG_CONFIG} install
+
+WORKDIR ${PG_SRC}/contrib/babelfishpg_money
+RUN make -j ${JOBS} && make PG_CONFIG=${PG_CONFIG} install
+
+WORKDIR ${PG_SRC}/contrib/babelfishpg_tds
+RUN make -j ${JOBS} && make PG_CONFIG=${PG_CONFIG} install
+
+WORKDIR ${PG_SRC}/contrib/babelfishpg_tsql
+RUN make -j ${JOBS} && make PG_CONFIG=${PG_CONFIG} install
+
+# Run stage
+FROM minimal AS standard
+ENV DEBIAN_FRONTEND=noninteractive
+ENV BABELFISH_HOME=/opt/babelfish
+ENV POSTGRES_USER_HOME=/var/lib/babelfish
+
+WORKDIR /
+
+COPY --from=builder ${BABELFISH_HOME}/usr/lib/postgresql/15/bin /usr/lib/postgresql/15/bin
+COPY --from=builder ${BABELFISH_HOME}/usr/lib/x86_64-linux-gnu/postgresql /usr/lib/postgresql/15/lib
+COPY --from=builder --exclude=${BABELFISH_HOME}/usr/lib/x86_64-linux-gnu/postgresql ${BABELFISH_HOME}/usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu 
+
+RUN apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false && \
+    rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
+
+USER 26

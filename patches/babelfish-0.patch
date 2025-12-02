@@ -1,0 +1,27 @@
+diff --git a/contrib/babelfishpg_tsql/src/backend_parser/parser.c b/contrib/babelfishpg_tsql/src/backend_parser/parser.c
+index 37db5620..0420cc6e 100644
+--- a/contrib/babelfishpg_tsql/src/backend_parser/parser.c
++++ b/contrib/babelfishpg_tsql/src/backend_parser/parser.c
+@@ -29,8 +29,6 @@
+ #include "src/pltsql.h"
+ #include "tcop/tcopprot.h"
+
+-int			pgtsql_base_yydebug;
+-
+ List	   *babelfishpg_tsql_raw_parser(const char *str, RawParseMode mode);
+
+ /*
+diff --git a/contrib/babelfishpg_tsql/src/pl_comp.c b/contrib/babelfishpg_tsql/src/pl_comp.c
+index ba0ff829..5f38b861 100644
+--- a/contrib/babelfishpg_tsql/src/pl_comp.c
++++ b/contrib/babelfishpg_tsql/src/pl_comp.c
+@@ -62,9 +62,6 @@ bool		pltsql_DumpExecTree = false;
+ bool		pltsql_check_syntax = false;
+
+ PLtsql_function *pltsql_curr_compile;
+-int			pltsql_curr_compile_body_lineno;	/* lineno of
+-												 * function/procedure body in
+-												 * CREATE */
+
+ /* A context appropriate for short-term allocs during compilation */
+ MemoryContext pltsql_compile_tmp_cxt;
