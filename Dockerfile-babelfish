@@ -125,10 +125,8 @@ RUN ./configure CFLAGS="-ggdb"\
 
 RUN make DESTDIR=${BABELFISH_HOME}/ -j ${JOBS} 2>error.txt && make install DESTDIR=${BABELFISH_HOME}/
 
-COPY babelfish-0.patch .
+COPY patches .
 RUN patch -p1 < babelfish-0.patch
-
-COPY babelfish-1.patch .
 RUN patch -p1 < babelfish-1.patch
 
 WORKDIR ${PG_SRC}/contrib
@@ -166,7 +164,9 @@ WORKDIR /
 
 COPY --from=builder ${BABELFISH_HOME}/usr/lib/postgresql/15/bin /usr/lib/postgresql/15/bin
 COPY --from=builder ${BABELFISH_HOME}/usr/lib/x86_64-linux-gnu/postgresql /usr/lib/postgresql/15/lib
-COPY --from=builder --exclude=${BABELFISH_HOME}/usr/lib/x86_64-linux-gnu/postgresql ${BABELFISH_HOME}/usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu 
+COPY --from=builder ${BABELFISH_HOME}/usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu
+COPY --from=builder ${BABELFISH_HOME}/usr/share/postgresql/15 /usr/share/postgresql/15
+RUN rm -rf /usr/lib/x86_64-linux-gnu/postgresql && ln -sv /usr/lib/postgresql/15/lib /usr/lib/x86_64-linux-gnu/postgresql
 
 RUN apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false && \
     rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
