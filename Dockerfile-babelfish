@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends\
 
 RUN apt-get install -y --no-install-recommends \
     liblz4-dev python3-dev libzstd-dev libgss-dev libselinux-dev libkrb5-dev \
-    libsystemd-dev tcl-dev libperl-dev
+    libsystemd-dev tcl-dev libperl-dev pgxnclient
 
 # Download babelfish sources
 WORKDIR /workplace
@@ -153,6 +153,8 @@ RUN make -j ${JOBS} && make PG_CONFIG=${PG_CONFIG} install
 
 WORKDIR ${PG_SRC}/contrib/babelfishpg_tsql
 RUN make -j ${JOBS} && make PG_CONFIG=${PG_CONFIG} install
+
+RUN USE_PGXS=1 pgxn install --pg_config=${PG_CONFIG} pg_stat_monitor
 
 # Run stage
 FROM minimal AS standard
